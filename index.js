@@ -15,6 +15,9 @@ const config = {
 const client = new line.Client(config);
 const googleMapsClient = new Client({});
 
+// 儲存使用者位置資訊
+const userLocations = new Map();
+
 // 處理 Line Webhook
 app.post('/webhook', line.middleware(config), (req, res) => {
   Promise.all(req.body.events.map(handleEvent))
@@ -60,6 +63,10 @@ async function handleEvent(event) {
 async function handleLocationRequest(event) {
   try {
     const { latitude, longitude } = event.message.location;
+    
+    // 儲存使用者位置
+    userLocations.set(event.source.userId, { latitude, longitude });
+    
     const restaurants = await searchNearbyRestaurants(latitude, longitude);
     
     if (restaurants.length === 0) {
@@ -97,7 +104,26 @@ async function handlePostback(event) {
     });
   } else if (data.action === 'recommend') {
     // 重新推薦
-    return handleLocationRequest(event);
+    const userLocation = userLocations.get(event.source.userId);
+    
+    if (!userLocation) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '請先傳送您的位置給我，我會為您推薦附近的美食！'
+      });
+    }
+    
+    const restaurants = await searchNearbyRestaurants(userLocation.latitude, userLocation.longitude);
+    
+    if (restaurants.length === 0) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '抱歉，在您附近沒有找到合適的餐廳。'
+      });
+    }
+    
+    const restaurantTemplate = createRestaurantTemplate(restaurants);
+    return client.replyMessage(event.replyToken, restaurantTemplate);
   }
 }
 
