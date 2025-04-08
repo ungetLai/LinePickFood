@@ -15,6 +15,7 @@ const config = {
 const client = new line.Client(config);
 const googleMapsClient = new Client({});
 const userLocations = new Map();
+const userPreviousPlaces = new Map();
 
 app.post('/webhook', line.middleware(config), (req, res) => {
   Promise.all(req.body.events.map(handleEvent))
@@ -35,17 +36,9 @@ async function handleEvent(event) {
       return handleLocationRequest(event);
     }
 
-    const userMessage = event.message.text.toLowerCase();
-    if (userMessage.includes('推薦') || userMessage.includes('附近') || userMessage.includes('美食')) {
-      return client.replyMessage(event.replyToken, {
-        type: 'text',
-        text: '請點擊下方選單的「位置」按鈕，或直接傳送您的位置給我，我會為您推薦附近的美食！'
-      });
-    }
-
     return client.replyMessage(event.replyToken, {
       type: 'text',
-      text: '請傳送您的位置，或輸入「推薦」來獲取附近美食推薦！'
+      text: '請傳送您的位置資訊，點選輸入框左側的「＋」並選擇「位置」以獲取附近美食推薦 🍱'
     });
   }
 
@@ -65,13 +58,16 @@ async function handleLocationRequest(event) {
     const { latitude, longitude } = message;
     userLocations.set(event.source.userId, { latitude, longitude });
 
-    const restaurants = await searchNearbyRestaurants(latitude, longitude);
+    const restaurants = await searchNearbyRestaurants(latitude, longitude, []);
     if (restaurants.length === 0) {
       return client.replyMessage(event.replyToken, {
         type: 'text',
         text: '抱歉，在您附近沒有找到合適的餐廳。'
       });
     }
+
+    const placeIds = restaurants.map(r => r.place_id);
+    userPreviousPlaces.set(event.source.userId, placeIds);
 
     const flexMessage = createFlexMessage(restaurants);
     return client.replyMessage(event.replyToken, flexMessage);
@@ -96,6 +92,8 @@ ${mapsUrl}`
       });
     } else if (data.action === 'recommend') {
       const userLocation = userLocations.get(event.source.userId);
+      const previousPlaceIds = userPreviousPlaces.get(event.source.userId) || [];
+
       if (!userLocation) {
         return client.replyMessage(event.replyToken, {
           type: 'text',
@@ -103,13 +101,16 @@ ${mapsUrl}`
         });
       }
 
-      const restaurants = await searchNearbyRestaurants(userLocation.latitude, userLocation.longitude);
+      const restaurants = await searchNearbyRestaurants(userLocation.latitude, userLocation.longitude, previousPlaceIds);
       if (restaurants.length === 0) {
         return client.replyMessage(event.replyToken, {
           type: 'text',
-          text: '抱歉，在您附近沒有找到合適的餐廳。'
+          text: '找不到新的餐廳了，已經推薦過全部！'
         });
       }
+
+      const placeIds = restaurants.map(r => r.place_id);
+      userPreviousPlaces.set(event.source.userId, placeIds);
 
       const flexMessage = createFlexMessage(restaurants);
       return client.replyMessage(event.replyToken, flexMessage);
@@ -123,7 +124,7 @@ ${mapsUrl}`
   }
 }
 
-async function searchNearbyRestaurants(latitude, longitude) {
+async function searchNearbyRestaurants(latitude, longitude, excludePlaceIds = []) {
   try {
     const response = await googleMapsClient.placesNearby({
       params: {
@@ -134,12 +135,12 @@ async function searchNearbyRestaurants(latitude, longitude) {
       }
     });
 
-    const restaurants = response.data.results
-      .filter(restaurant => restaurant.rating && restaurant.rating >= 3.5)
+    const filtered = response.data.results
+      .filter(r => r.rating && r.rating >= 3.5 && !excludePlaceIds.includes(r.place_id))
       .sort((a, b) => b.rating - a.rating)
       .slice(0, 3);
 
-    return restaurants;
+    return filtered;
   } catch (error) {
     console.error('Error searching nearby restaurants:', error);
     throw error;
@@ -210,7 +211,6 @@ function createFlexMessage(restaurants) {
     };
   });
 
-  // 加一個 bubble 作為重新推薦按鈕
   bubbles.push({
     type: 'bubble',
     body: {
