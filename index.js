@@ -73,8 +73,8 @@ async function handleLocationRequest(event) {
       });
     }
 
-    const restaurantTemplate = createRestaurantTemplate(restaurants);
-    return client.replyMessage(event.replyToken, restaurantTemplate);
+    const flexMessage = createFlexMessage(restaurants);
+    return client.replyMessage(event.replyToken, flexMessage);
   } catch (error) {
     console.error('Error handling location request:', error);
     return client.replyMessage(event.replyToken, {
@@ -88,12 +88,11 @@ async function handlePostback(event) {
   try {
     const data = JSON.parse(event.postback.data);
     if (data.action === 'navigate') {
+      const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${data.latitude},${data.longitude}`;
       return client.replyMessage(event.replyToken, {
-        type: 'location',
-        title: data.name,
-        address: data.address,
-        latitude: data.latitude,
-        longitude: data.longitude
+        type: 'text',
+        text: `開啟導航到：${data.name}
+${mapsUrl}`
       });
     } else if (data.action === 'recommend') {
       const userLocation = userLocations.get(event.source.userId);
@@ -112,8 +111,8 @@ async function handlePostback(event) {
         });
       }
 
-      const restaurantTemplate = createRestaurantTemplate(restaurants);
-      return client.replyMessage(event.replyToken, restaurantTemplate);
+      const flexMessage = createFlexMessage(restaurants);
+      return client.replyMessage(event.replyToken, flexMessage);
     }
   } catch (error) {
     console.error('Error handling postback:', error);
@@ -147,40 +146,96 @@ async function searchNearbyRestaurants(latitude, longitude) {
   }
 }
 
-function createRestaurantTemplate(restaurants) {
-  const columns = restaurants.map(restaurant => {
-    let thumbnailImageUrl = 'https://placehold.co/400x300?text=No+Image';
-    if (restaurant.photos && restaurant.photos.length > 0) {
-      thumbnailImageUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${restaurant.photos[0].photo_reference}&key=${process.env.GOOGLE_MAPS_API_KEY}`;
+function createFlexMessage(restaurants) {
+  const bubbles = restaurants.map(r => {
+    let imageUrl = 'https://placehold.co/600x400?text=No+Image';
+    if (r.photos && r.photos.length > 0) {
+      imageUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${r.photos[0].photo_reference}&key=${process.env.GOOGLE_MAPS_API_KEY}`;
     }
 
     return {
-      thumbnailImageUrl,
-      title: restaurant.name,
-      text: `評分：${restaurant.rating || '無評分'}
-地址：${restaurant.vicinity}`,
-      actions: [
-        {
-          type: 'postback',
-          label: '吃這家',
-          data: JSON.stringify({
-            action: 'navigate',
-            name: restaurant.name,
-            address: restaurant.vicinity,
-            latitude: restaurant.geometry.location.lat,
-            longitude: restaurant.geometry.location.lng
-          })
-        }
-      ]
+      type: 'bubble',
+      hero: {
+        type: 'image',
+        url: imageUrl,
+        size: 'full',
+        aspectRatio: '20:13',
+        aspectMode: 'cover'
+      },
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        contents: [
+          {
+            type: 'text',
+            text: r.name,
+            weight: 'bold',
+            size: 'lg',
+            wrap: true
+          },
+          {
+            type: 'text',
+            text: `⭐ 評分：${r.rating || '無'}
+📍${r.vicinity}`,
+            size: 'sm',
+            color: '#666666',
+            margin: 'md',
+            wrap: true
+          }
+        ]
+      },
+      footer: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: 'sm',
+        contents: [
+          {
+            type: 'button',
+            style: 'primary',
+            height: 'sm',
+            action: {
+              type: 'postback',
+              label: '吃這家',
+              data: JSON.stringify({
+                action: 'navigate',
+                name: r.name,
+                latitude: r.geometry.location.lat,
+                longitude: r.geometry.location.lng
+              })
+            }
+          }
+        ],
+        flex: 0
+      }
     };
   });
 
+  // 加一個 bubble 作為重新推薦按鈕
+  bubbles.push({
+    type: 'bubble',
+    body: {
+      type: 'box',
+      layout: 'vertical',
+      contents: [
+        {
+          type: 'button',
+          style: 'secondary',
+          action: {
+            type: 'postback',
+            label: '🔁 重新推薦',
+            data: JSON.stringify({ action: 'recommend' })
+          }
+        }
+      ]
+    }
+  });
+
   return {
-    type: 'template',
+    type: 'flex',
     altText: '附近美食推薦',
-    template: {
+    contents: {
       type: 'carousel',
-      columns
+      contents: bubbles
     }
   };
 }
