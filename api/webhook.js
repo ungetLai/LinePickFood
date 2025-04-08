@@ -16,10 +16,16 @@ const userLocations = new Map();
 const userPrevPlaces = new Map();
 const userPlaceCache = new Map();
 
+// 修正：rawBody + 手動 JSON parse
 app.use((req, res, next) => {
-  getRawBody(req)
+  getRawBody(req, {
+    length: req.headers['content-length'],
+    limit: '1mb',
+    encoding: req.charset || 'utf-8'
+  })
     .then((buf) => {
       req.rawBody = buf;
+      req.body = JSON.parse(buf);
       next();
     })
     .catch((err) => {
@@ -27,7 +33,7 @@ app.use((req, res, next) => {
       res.status(400).send('Invalid body');
     });
 });
-app.use(express.json());
+
 app.use(middleware(config));
 
 app.post('/api/webhook', async (req, res) => {
@@ -144,7 +150,6 @@ function createFlex(places) {
     };
   });
 
-  // 重新推薦按鈕
   bubbles.push({
     type: 'bubble',
     body: {
