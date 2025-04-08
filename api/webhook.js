@@ -47,149 +47,155 @@ async function handleEvent(event) {
   const message = event.message;
 
   if (event.type === 'message') {
+    const text = message.text?.trim();
     const session = conditionSessions.get(userId);
-
+  
     if (message.type === 'location') {
       const { latitude, longitude } = message;
       return await handleSearch(latitude, longitude, event.replyToken, userId);
     }
-
-    if (message.type === 'text') {
-      const text = message.text.trim();
-
-      // 處理條件推薦流程
-      if (text === '開始條件推薦') {
-        conditionSessions.set(userId, { step: 'cuisine' });
+  
+    // 非文字類型（圖片、貼圖、語音等）
+    if (message.type !== 'text') {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '請點選輸入框左側的「＋」並選擇「位置資訊 📍」\n或輸入一個明顯的地點名稱（例如「台北車站」）以獲得附近美食推薦 🍱'
+      });
+    }
+  
+    // 啟動條件推薦
+    if (text === '開始條件推薦') {
+      conditionSessions.set(userId, { step: 'cuisine' });
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '🍜 想吃什麼料理？（中式、日式、西式、韓式、台式、不限）'
+      });
+    }
+  
+    if (session) {
+      if (session.step === 'cuisine') {
+        session.cuisine = ['中式', '日式', '西式', '韓式', '台式'].includes(text) ? text : '不限';
+        session.step = 'rating';
         return client.replyMessage(event.replyToken, {
           type: 'text',
-          text: '🍜 想吃什麼料理？（中式、日式、西式、韓式、台式、不限）'
+          text: '⭐ 想找幾星以上的餐廳？（輸入 1～5，預設 3）'
         });
       }
-
-      if (session) {
-        if (session.step === 'cuisine') {
-          session.cuisine = ['中式', '日式', '西式', '韓式', '台式'].includes(text) ? text : '不限';
-          session.step = 'rating';
-          return client.replyMessage(event.replyToken, {
-            type: 'text',
-            text: '⭐ 想找幾星以上的餐廳？（輸入 1～5，預設 3）'
-          });
-        }
-        if (session.step === 'rating') {
-          const rating = parseFloat(text);
-          session.rating = (rating >= 1 && rating <= 5) ? rating : 3;
-          session.step = 'radius';
-          return client.replyMessage(event.replyToken, {
-            type: 'text',
-            text: '📏 想搜尋多遠範圍？請輸入公尺數（300～5000，預設 2000）'
-          });
-        }
-        if (session.step === 'radius') {
-          const r = parseInt(text);
-          session.radius = (r >= 300 && r <= 5000) ? r : 2000;
-          session.step = 'location';
-          return client.replyMessage(event.replyToken, {
-            type: 'text',
-            text: '📍 請輸入附近明顯地點（如 台北車站）'
-          });
-        }
-        if (session.step === 'location') {
-          const geo = await mapsClient.geocode({
-            params: {
-              address: text,
-              key: process.env.GOOGLE_MAPS_API_KEY
-            }
-          });
-          if (!geo.data.results.length) {
-            return client.replyMessage(event.replyToken, {
-              type: 'text',
-              text: '❌ 找不到此地點，請再試一次'
-            });
-          }
-          const { lat, lng } = geo.data.results[0].geometry.location;
-          const cuisineMap = {
-            中式: ['chinese'],
-            日式: ['japanese'],
-            西式: ['western', 'american'],
-            韓式: ['korean'],
-            台式: ['taiwanese']
-          };
-          const keywords = cuisineMap[session.cuisine] || [];
-          const res = await mapsClient.placesNearby({
-            params: {
-              location: { lat, lng },
-              radius: session.radius,
-              type: 'restaurant',
-              key: process.env.GOOGLE_MAPS_API_KEY
-            }
-          });
-          const results = res.data.results.filter(p =>
-            p.rating >= session.rating &&
-            p.opening_hours?.open_now &&
-            (keywords.length === 0 || keywords.some(k => (p.name + p.types.join()).toLowerCase().includes(k)))
-          ).sort(() => Math.random() - 0.5).slice(0, 3);
-
-          if (!results.length) {
-            return client.replyMessage(event.replyToken, {
-              type: 'text',
-              text: '😢 找不到符合條件的餐廳，請換個地點或條件試試看！'
-            });
-          }
-
-          conditionSessions.delete(userId);
-          return client.replyMessage(event.replyToken, createFlex(results));
-        }
+      if (session.step === 'rating') {
+        const rating = parseFloat(text);
+        session.rating = (rating >= 1 && rating <= 5) ? rating : 3;
+        session.step = 'radius';
+        return client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: '📏 想搜尋多遠範圍？請輸入公尺數（300～5000，預設 2000）'
+        });
       }
-
-      // 處理正常地點文字查詢
-      try {
+      if (session.step === 'radius') {
+        const r = parseInt(text);
+        session.radius = (r >= 300 && r <= 5000) ? r : 2000;
+        session.step = 'location';
+        return client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: '📍 請輸入附近明顯地點（如 台北車站）'
+        });
+      }
+      if (session.step === 'location') {
         const geo = await mapsClient.geocode({
+          params: { address: text, key: process.env.GOOGLE_MAPS_API_KEY }
+        });
+        if (!geo.data.results.length) {
+          return client.replyMessage(event.replyToken, {
+            type: 'text',
+            text: '❌ 找不到此地點，請再試一次'
+          });
+        }
+  
+        const { lat, lng } = geo.data.results[0].geometry.location;
+        const cuisineMap = {
+          中式: ['chinese'],
+          日式: ['japanese'],
+          西式: ['western', 'american'],
+          韓式: ['korean'],
+          台式: ['taiwanese']
+        };
+        const keywords = cuisineMap[session.cuisine] || [];
+  
+        const res = await mapsClient.placesNearby({
           params: {
-            address: text,
+            location: { lat, lng },
+            radius: session.radius,
+            type: 'restaurant',
             key: process.env.GOOGLE_MAPS_API_KEY
           }
         });
-        if (!geo.data.results.length) throw new Error();
-        const { lat, lng } = geo.data.results[0].geometry.location;
-        return await handleSearch(lat, lng, event.replyToken, userId);
-      } catch {
-        return client.replyMessage(event.replyToken, [
-          {
+  
+        const results = res.data.results.filter(p =>
+          p.rating >= session.rating &&
+          p.opening_hours?.open_now &&
+          (keywords.length === 0 || keywords.some(k => (p.name + p.types.join()).toLowerCase().includes(k)))
+        ).sort(() => Math.random() - 0.5).slice(0, 3);
+  
+        conditionSessions.delete(userId);
+  
+        if (!results.length) {
+          return client.replyMessage(event.replyToken, {
             type: 'text',
-            text: '請傳送您目前的位置，或輸入有效地點名稱（如「台北車站」）以推薦附近美食 🍱'
-          },
-          {
-            type: 'flex',
-            altText: '條件推薦',
-            contents: {
-              type: 'bubble',
-              body: {
-                type: 'box',
-                layout: 'vertical',
-                contents: [
-                  {
-                    type: 'text',
-                    text: '想要更精準推薦？',
-                    weight: 'bold',
-                    size: 'md',
-                    wrap: true
-                  },
-                  {
-                    type: 'button',
-                    style: 'primary',
-                    margin: 'lg',
-                    action: {
-                      type: 'message',
-                      label: '🔍 設定條件推薦',
-                      text: '開始條件推薦'
-                    }
+            text: '🥲 找不到符合條件的餐廳，請重新設定條件或換個地點試試'
+          });
+        }
+  
+        return client.replyMessage(event.replyToken, createFlex(results));
+      }
+    }
+  
+    // 非條件流程，嘗試當地點查詢
+    try {
+      const geo = await mapsClient.geocode({
+        params: {
+          address: text,
+          key: process.env.GOOGLE_MAPS_API_KEY
+        }
+      });
+      if (!geo.data.results.length) throw new Error();
+      const { lat, lng } = geo.data.results[0].geometry.location;
+      return await handleSearch(lat, lng, event.replyToken, userId);
+    } catch {
+      return client.replyMessage(event.replyToken, [
+        {
+          type: 'text',
+          text: '請傳送您目前的位置，或輸入有效地點名稱（如「台北車站」）以推薦附近美食 🍱'
+        },
+        {
+          type: 'flex',
+          altText: '條件推薦',
+          contents: {
+            type: 'bubble',
+            body: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'text',
+                  text: '想要更精準推薦？',
+                  weight: 'bold',
+                  size: 'md',
+                  wrap: true
+                },
+                {
+                  type: 'button',
+                  style: 'primary',
+                  margin: 'lg',
+                  action: {
+                    type: 'message',
+                    label: '🔍 設定條件推薦',
+                    text: '開始條件推薦'
                   }
-                ]
-              }
+                }
+              ]
             }
           }
-        ]);
-      }
+        }
+      ]);
     }
   }
 
