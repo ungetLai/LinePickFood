@@ -7,7 +7,6 @@ const { Client } = require('@googlemaps/google-maps-services-js');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Line Bot 設定
 const config = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
   channelSecret: process.env.LINE_CHANNEL_SECRET
@@ -15,11 +14,8 @@ const config = {
 
 const client = new line.Client(config);
 const googleMapsClient = new Client({});
-
-// 儲存使用者位置資訊
 const userLocations = new Map();
 
-// 處理 Line Webhook
 app.post('/webhook', line.middleware(config), (req, res) => {
   Promise.all(req.body.events.map(handleEvent))
     .then((result) => res.json(result))
@@ -29,14 +25,11 @@ app.post('/webhook', line.middleware(config), (req, res) => {
     });
 });
 
-// 處理事件
 async function handleEvent(event) {
-  // 處理按鈕點擊事件
   if (event.type === 'postback') {
     return handlePostback(event);
   }
 
-  // 處理訊息事件
   if (event.type === 'message') {
     if (event.message.type === 'location') {
       return handleLocationRequest(event);
@@ -59,7 +52,6 @@ async function handleEvent(event) {
   return Promise.resolve(null);
 }
 
-// 處理位置請求
 async function handleLocationRequest(event) {
   try {
     const { message } = event;
@@ -71,7 +63,6 @@ async function handleLocationRequest(event) {
     }
 
     const { latitude, longitude } = message;
-
     userLocations.set(event.source.userId, { latitude, longitude });
 
     const restaurants = await searchNearbyRestaurants(latitude, longitude);
@@ -93,7 +84,6 @@ async function handleLocationRequest(event) {
   }
 }
 
-// 處理按鈕點擊事件
 async function handlePostback(event) {
   try {
     const data = JSON.parse(event.postback.data);
@@ -134,7 +124,6 @@ async function handlePostback(event) {
   }
 }
 
-// 搜尋附近餐廳
 async function searchNearbyRestaurants(latitude, longitude) {
   try {
     const response = await googleMapsClient.placesNearby({
@@ -158,7 +147,6 @@ async function searchNearbyRestaurants(latitude, longitude) {
   }
 }
 
-// 建立餐廳資訊模板
 function createRestaurantTemplate(restaurants) {
   const columns = restaurants.map(restaurant => {
     let thumbnailImageUrl = 'https://placehold.co/400x300?text=No+Image';
@@ -192,19 +180,11 @@ function createRestaurantTemplate(restaurants) {
     altText: '附近美食推薦',
     template: {
       type: 'carousel',
-      columns,
-      actions: [
-        {
-          type: 'postback',
-          label: '重新推薦',
-          data: JSON.stringify({ action: 'recommend' })
-        }
-      ]
+      columns
     }
   };
 }
 
-// 啟動伺服器
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
 });
