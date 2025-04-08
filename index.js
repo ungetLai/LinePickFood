@@ -59,7 +59,7 @@ async function handleEvent(event) {
 // 處理位置請求
 async function handleLocationRequest(event) {
   try {
-    const { latitude, longitude } = event.message;
+    const { latitude, longitude } = event.message.location;
     const restaurants = await searchNearbyRestaurants(latitude, longitude);
     
     if (restaurants.length === 0) {
@@ -128,26 +128,32 @@ async function searchNearbyRestaurants(latitude, longitude) {
 
 // 建立餐廳資訊模板
 function createRestaurantTemplate(restaurants) {
-  const columns = restaurants.map(restaurant => ({
-    thumbnailImageUrl: restaurant.photos ? 
-      `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${restaurant.photos[0].photo_reference}&key=${process.env.GOOGLE_MAPS_API_KEY}` : 
-      'https://placehold.co/400x300?text=No+Image',
-    title: restaurant.name,
-    text: `評分：${restaurant.rating || '無評分'}\n地址：${restaurant.vicinity}`,
-    actions: [
-      {
-        type: 'postback',
-        label: '吃這家',
-        data: JSON.stringify({
-          action: 'navigate',
-          name: restaurant.name,
-          address: restaurant.vicinity,
-          latitude: restaurant.geometry.location.lat,
-          longitude: restaurant.geometry.location.lng
-        })
-      }
-    ]
-  }));
+  const columns = restaurants.map(restaurant => {
+    // 處理照片 URL
+    let thumbnailImageUrl = 'https://placehold.co/400x300?text=No+Image';
+    if (restaurant.photos && restaurant.photos.length > 0) {
+      thumbnailImageUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${restaurant.photos[0].photo_reference}&key=${process.env.GOOGLE_MAPS_API_KEY}`;
+    }
+
+    return {
+      thumbnailImageUrl: thumbnailImageUrl,
+      title: restaurant.name,
+      text: `評分：${restaurant.rating || '無評分'}\n地址：${restaurant.vicinity}`,
+      actions: [
+        {
+          type: 'postback',
+          label: '吃這家',
+          data: JSON.stringify({
+            action: 'navigate',
+            name: restaurant.name,
+            address: restaurant.vicinity,
+            latitude: restaurant.geometry.location.lat,
+            longitude: restaurant.geometry.location.lng
+          })
+        }
+      ]
+    };
+  });
 
   return {
     type: 'template',
