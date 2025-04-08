@@ -1,3 +1,4 @@
+
 require('dotenv').config();
 const express = require('express');
 const line = require('@line/bot-sdk');
@@ -37,13 +38,11 @@ async function handleEvent(event) {
 
   // 處理訊息事件
   if (event.type === 'message') {
-    // 處理位置訊息
     if (event.message.type === 'location') {
       return handleLocationRequest(event);
     }
 
     const userMessage = event.message.text.toLowerCase();
-    
     if (userMessage.includes('推薦') || userMessage.includes('附近') || userMessage.includes('美食')) {
       return client.replyMessage(event.replyToken, {
         type: 'text',
@@ -63,13 +62,19 @@ async function handleEvent(event) {
 // 處理位置請求
 async function handleLocationRequest(event) {
   try {
-    const { latitude, longitude } = event.message.location;
-    
-    // 儲存使用者位置
+    const { message } = event;
+    if (message.type !== 'location' || typeof message.latitude !== 'number' || typeof message.longitude !== 'number') {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '請傳送有效的位置資訊，以便我們推薦附近的餐廳。'
+      });
+    }
+
+    const { latitude, longitude } = message;
+
     userLocations.set(event.source.userId, { latitude, longitude });
-    
+
     const restaurants = await searchNearbyRestaurants(latitude, longitude);
-    
     if (restaurants.length === 0) {
       return client.replyMessage(event.replyToken, {
         type: 'text',
@@ -77,9 +82,7 @@ async function handleLocationRequest(event) {
       });
     }
 
-    // 建立餐廳資訊模板
     const restaurantTemplate = createRestaurantTemplate(restaurants);
-    
     return client.replyMessage(event.replyToken, restaurantTemplate);
   } catch (error) {
     console.error('Error handling location request:', error);
@@ -94,9 +97,7 @@ async function handleLocationRequest(event) {
 async function handlePostback(event) {
   try {
     const data = JSON.parse(event.postback.data);
-    
     if (data.action === 'navigate') {
-      // 傳送位置訊息
       return client.replyMessage(event.replyToken, {
         type: 'location',
         title: data.name,
@@ -105,25 +106,22 @@ async function handlePostback(event) {
         longitude: data.longitude
       });
     } else if (data.action === 'recommend') {
-      // 重新推薦
       const userLocation = userLocations.get(event.source.userId);
-      
       if (!userLocation) {
         return client.replyMessage(event.replyToken, {
           type: 'text',
           text: '請先傳送您的位置給我，我會為您推薦附近的美食！'
         });
       }
-      
+
       const restaurants = await searchNearbyRestaurants(userLocation.latitude, userLocation.longitude);
-      
       if (restaurants.length === 0) {
         return client.replyMessage(event.replyToken, {
           type: 'text',
           text: '抱歉，在您附近沒有找到合適的餐廳。'
         });
       }
-      
+
       const restaurantTemplate = createRestaurantTemplate(restaurants);
       return client.replyMessage(event.replyToken, restaurantTemplate);
     }
@@ -142,17 +140,16 @@ async function searchNearbyRestaurants(latitude, longitude) {
     const response = await googleMapsClient.placesNearby({
       params: {
         location: `${latitude},${longitude}`,
-        radius: 1000, // 搜尋半徑 1 公里
+        radius: 1000,
         type: 'restaurant',
         key: process.env.GOOGLE_MAPS_API_KEY
       }
     });
 
-    // 過濾並排序餐廳（評分高的優先）
     const restaurants = response.data.results
       .filter(restaurant => restaurant.rating && restaurant.rating >= 3.5)
       .sort((a, b) => b.rating - a.rating)
-      .slice(0, 3); // 只取前三家
+      .slice(0, 3);
 
     return restaurants;
   } catch (error) {
@@ -164,16 +161,16 @@ async function searchNearbyRestaurants(latitude, longitude) {
 // 建立餐廳資訊模板
 function createRestaurantTemplate(restaurants) {
   const columns = restaurants.map(restaurant => {
-    // 處理照片 URL
     let thumbnailImageUrl = 'https://placehold.co/400x300?text=No+Image';
     if (restaurant.photos && restaurant.photos.length > 0) {
       thumbnailImageUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${restaurant.photos[0].photo_reference}&key=${process.env.GOOGLE_MAPS_API_KEY}`;
     }
 
     return {
-      thumbnailImageUrl: thumbnailImageUrl,
+      thumbnailImageUrl,
       title: restaurant.name,
-      text: `評分：${restaurant.rating || '無評分'}\n地址：${restaurant.vicinity}`,
+      text: `評分：${restaurant.rating || '無評分'}
+地址：${restaurant.vicinity}`,
       actions: [
         {
           type: 'postback',
@@ -195,14 +192,12 @@ function createRestaurantTemplate(restaurants) {
     altText: '附近美食推薦',
     template: {
       type: 'carousel',
-      columns: columns,
+      columns,
       actions: [
         {
           type: 'postback',
           label: '重新推薦',
-          data: JSON.stringify({
-            action: 'recommend'
-          })
+          data: JSON.stringify({ action: 'recommend' })
         }
       ]
     }
@@ -212,4 +207,4 @@ function createRestaurantTemplate(restaurants) {
 // 啟動伺服器
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
-}); 
+});
