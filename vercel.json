@@ -1,1 +1,1 @@
-{"rewrites": [{"source": "/webhook", "destination": "/api/webhook"}]}
+{"rewrites":[{"source":"/webhook","destination":"/api/webhook"}]}

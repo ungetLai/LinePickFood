@@ -1,1 +1,16 @@
-{"name": "eatit-line-bot-vercel", "version": "1.0.0", "main": "api/webhook.js", "scripts": {"start": "node api/webhook.js"}, "dependencies": {"@line/bot-sdk": "^7.5.0", "@googlemaps/google-maps-services-js": "^3.3.29", "dotenv": "^16.0.0", "express": "^4.18.2", "raw-body": "^2.5.1"}}
+
+{
+  "name": "eatit-vercel",
+  "version": "1.0.0",
+  "main": "api/webhook.js",
+  "scripts": {
+    "start": "node api/webhook.js"
+  },
+  "dependencies": {
+    "@line/bot-sdk": "^7.5.0",
+    "@googlemaps/google-maps-services-js": "^3.3.29",
+    "dotenv": "^16.0.0",
+    "express": "^4.18.2",
+    "raw-body": "^2.5.1"
+  }
+}
