@@ -16,6 +16,7 @@ const client = new line.Client(config);
 const googleMapsClient = new Client({});
 const userLocations = new Map();
 const userPreviousPlaces = new Map();
+const userPlaceCache = new Map();
 
 app.post('/webhook', line.middleware(config), (req, res) => {
   Promise.all(req.body.events.map(handleEvent))
@@ -36,9 +37,10 @@ async function handleEvent(event) {
       return handleLocationRequest(event);
     }
 
+    // 所有非位置訊息一律提示
     return client.replyMessage(event.replyToken, {
       type: 'text',
-      text: '請傳送您的位置資訊，點選輸入框左側的「＋」並選擇「位置」以獲取附近美食推薦 🍱'
+      text: '請傳送您的位置資訊，點選輸入框左側的「＋」並選擇「位置資訊」以獲取附近美食推薦 🍱'
     });
   }
 
@@ -56,20 +58,23 @@ async function handleLocationRequest(event) {
     }
 
     const { latitude, longitude } = message;
-    userLocations.set(event.source.userId, { latitude, longitude });
+    const userId = event.source.userId;
 
-    const restaurants = await searchNearbyRestaurants(latitude, longitude, []);
-    if (restaurants.length === 0) {
-      return client.replyMessage(event.replyToken, {
-        type: 'text',
-        text: '抱歉，在您附近沒有找到合適的餐廳。'
-      });
-    }
+    userLocations.set(userId, { latitude, longitude });
 
+    const restaurants = await searchNearbyRestaurants(latitude, longitude);
     const placeIds = restaurants.map(r => r.place_id);
-    userPreviousPlaces.set(event.source.userId, placeIds);
 
-    const flexMessage = createFlexMessage(restaurants);
+    // 打亂後存進 cache（避免每次都一樣）
+    const shuffled = restaurants.sort(() => Math.random() - 0.5);
+    userPlaceCache.set(userId, shuffled);
+    userPreviousPlaces.set(userId, []);
+
+    const toRecommend = shuffled.slice(0, 3);
+    const used = toRecommend.map(r => r.place_id);
+    userPreviousPlaces.set(userId, used);
+
+    const flexMessage = createFlexMessage(toRecommend);
     return client.replyMessage(event.replyToken, flexMessage);
   } catch (error) {
     console.error('Error handling location request:', error);
@@ -83,6 +88,8 @@ async function handleLocationRequest(event) {
 async function handlePostback(event) {
   try {
     const data = JSON.parse(event.postback.data);
+    const userId = event.source.userId;
+
     if (data.action === 'navigate') {
       const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${data.latitude},${data.longitude}`;
       return client.replyMessage(event.replyToken, {
@@ -91,28 +98,31 @@ async function handlePostback(event) {
 ${mapsUrl}`
       });
     } else if (data.action === 'recommend') {
-      const userLocation = userLocations.get(event.source.userId);
-      const previousPlaceIds = userPreviousPlaces.get(event.source.userId) || [];
+      const userLocation = userLocations.get(userId);
+      const allPlaces = userPlaceCache.get(userId) || [];
+      const usedPlaces = userPreviousPlaces.get(userId) || [];
 
-      if (!userLocation) {
+      if (!userLocation || allPlaces.length === 0) {
         return client.replyMessage(event.replyToken, {
           type: 'text',
           text: '請先傳送您的位置給我，我會為您推薦附近的美食！'
         });
       }
 
-      const restaurants = await searchNearbyRestaurants(userLocation.latitude, userLocation.longitude, previousPlaceIds);
-      if (restaurants.length === 0) {
+      // 找出未用過的
+      const remaining = allPlaces.filter(r => !usedPlaces.includes(r.place_id));
+      if (remaining.length === 0) {
         return client.replyMessage(event.replyToken, {
           type: 'text',
-          text: '找不到新的餐廳了，已經推薦過全部！'
+          text: '附近的推薦已經全部送過囉，請稍後再試或換個地點 🍴'
         });
       }
 
-      const placeIds = restaurants.map(r => r.place_id);
-      userPreviousPlaces.set(event.source.userId, placeIds);
+      const toRecommend = remaining.slice(0, 3);
+      const updatedUsed = usedPlaces.concat(toRecommend.map(r => r.place_id));
+      userPreviousPlaces.set(userId, updatedUsed);
 
-      const flexMessage = createFlexMessage(restaurants);
+      const flexMessage = createFlexMessage(toRecommend);
       return client.replyMessage(event.replyToken, flexMessage);
     }
   } catch (error) {
@@ -124,7 +134,7 @@ ${mapsUrl}`
   }
 }
 
-async function searchNearbyRestaurants(latitude, longitude, excludePlaceIds = []) {
+async function searchNearbyRestaurants(latitude, longitude) {
   try {
     const response = await googleMapsClient.placesNearby({
       params: {
@@ -135,12 +145,8 @@ async function searchNearbyRestaurants(latitude, longitude, excludePlaceIds = []
       }
     });
 
-    const filtered = response.data.results
-      .filter(r => r.rating && r.rating >= 3.5 && !excludePlaceIds.includes(r.place_id))
-      .sort((a, b) => b.rating - a.rating)
-      .slice(0, 3);
-
-    return filtered;
+    return response.data.results
+      .filter(r => r.rating && r.rating >= 3.5);
   } catch (error) {
     console.error('Error searching nearby restaurants:', error);
     throw error;
