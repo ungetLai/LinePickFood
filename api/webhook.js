@@ -1,4 +1,5 @@
 
+// webhook.js (完整互動式推薦流程)
 const express = require('express');
 const { middleware, Client } = require('@line/bot-sdk');
 const { Client: MapsClient } = require('@googlemaps/google-maps-services-js');
@@ -12,88 +13,35 @@ const config = {
 };
 const client = new Client(config);
 const mapsClient = new MapsClient({});
-const userLocations = new Map();
-const userPrevPlaces = new Map();
-const userPlaceCache = new Map();
+
+const userSessions = new Map();
+const CUISINE_KEYWORDS = {
+  中式: ['chinese'],
+  日式: ['japanese'],
+  西式: ['western', 'american', 'european'],
+  韓式: ['korean'],
+  台式: ['taiwanese']
+};
 
 app.use((req, res, next) => {
   getRawBody(req, {
     length: req.headers['content-length'],
     limit: '1mb',
     encoding: req.charset || 'utf-8'
-  })
-    .then((buf) => {
-      req.rawBody = buf;
-      req.body = JSON.parse(buf);
-      next();
-    })
-    .catch((err) => {
-      console.error('Raw body error:', err);
-      res.status(400).send('Invalid body');
-    });
+  }).then((buf) => {
+    req.rawBody = buf;
+    req.body = JSON.parse(buf);
+    next();
+  }).catch((err) => {
+    console.error('Raw body error:', err);
+    res.status(400).send('Invalid body');
+  });
 });
-
 app.use(middleware(config));
 
 app.post('/api/webhook', async (req, res) => {
   try {
-    await Promise.all(req.body.events.map(async (event) => {
-      const userId = event.source.userId;
-      if (event.type === 'message') {
-        if (event.message.type === 'location') {
-          const { latitude, longitude } = event.message;
-          return handleSearch(latitude, longitude, userId, event.replyToken);
-        } else if (event.message.type === 'text') {
-          const keyword = event.message.text;
-          try {
-            const geo = await mapsClient.geocode({
-              params: {
-                address: keyword,
-                key: process.env.GOOGLE_MAPS_API_KEY
-              }
-            });
-            if (!geo.data.results.length) throw new Error('找不到地點');
-            const { lat, lng } = geo.data.results[0].geometry.location;
-            return handleSearch(lat, lng, userId, event.replyToken);
-          } catch (err) {
-            console.error('Geocode error:', err);
-            return client.replyMessage(event.replyToken, {
-              type: 'text',
-              text: '無法解析這個地點名稱，請再試一次或傳送位置資訊 📍'
-            });
-          }
-        } else {
-          return client.replyMessage(event.replyToken, {
-            type: 'text',
-            text: '請傳送位置或輸入地點關鍵字，我將推薦目前有營業的美食餐廳 🍽️'
-          });
-        }
-      } else if (event.type === 'postback') {
-        const data = JSON.parse(event.postback.data);
-        if (data.action === 'navigate') {
-          const mapUrl = `https://www.google.com/maps/dir/?api=1&destination=${data.latitude},${data.longitude}`;
-          return client.replyMessage(event.replyToken, {
-            type: 'text',
-            text: `開啟導航到：${data.name}
-${mapUrl}`
-          });
-        }
-        if (data.action === 'recommend') {
-          const cache = userPlaceCache.get(userId) || [];
-          const used = userPrevPlaces.get(userId) || [];
-          const remaining = cache.filter(p => !used.includes(p.place_id));
-          if (remaining.length === 0) {
-            return client.replyMessage(event.replyToken, {
-              type: 'text',
-              text: '附近的餐廳已推薦完囉，可以傳送新位置或地點再探索更多 🍽️'
-            });
-          }
-          const selected = remaining.slice(0, 3);
-          userPrevPlaces.set(userId, used.concat(selected.map(p => p.place_id)));
-          return client.replyMessage(event.replyToken, createFlex(selected));
-        }
-      }
-    }));
+    await Promise.all(req.body.events.map(event => handleEvent(event)));
     res.status(200).send('OK');
   } catch (err) {
     console.error(err);
@@ -101,113 +49,125 @@ ${mapUrl}`
   }
 });
 
-async function handleSearch(lat, lng, userId, replyToken) {
-  userLocations.set(userId, { lat, lng });
-  const places = await getNearbyPlaces(lat, lng);
-  if (places.length === 0) {
-    return client.replyMessage(replyToken, {
+async function handleEvent(event) {
+  const userId = event.source.userId;
+  if (event.type === 'message' && event.message.type === 'location') {
+    userSessions.set(userId, { location: event.message, step: 'start' });
+    return client.replyMessage(event.replyToken, {
       type: 'text',
-      text: '附近沒有目前營業中的餐廳，請換個地點試試 🍴'
+      text: '你想吃什麼料理呢？（中式、日式、西式、台式、韓式，不限）'
     });
   }
-  const shuffled = places.sort(() => Math.random() - 0.5);
-  userPlaceCache.set(userId, shuffled);
-  const selected = shuffled.slice(0, 3);
-  userPrevPlaces.set(userId, selected.map(p => p.place_id));
-  const flex = createFlex(selected);
-  return client.replyMessage(replyToken, flex);
-}
 
-async function getNearbyPlaces(lat, lng) {
-  const res = await mapsClient.placesNearby({
-    params: {
-      location: { lat, lng },
-      radius: 2000,
-      type: 'restaurant',
-      key: process.env.GOOGLE_MAPS_API_KEY
+  if (event.type === 'message' && event.message.type === 'text') {
+    const session = userSessions.get(userId);
+
+    if (!session) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '👋 歡迎使用 EatIt 美食推薦機器人！請先傳送您的位置 📍'
+      });
     }
-  });
-  return res.data.results.filter(
-    p => p.rating >= 3 && p.opening_hours?.open_now
-  );
-}
 
-function createFlex(places) {
-  const bubbles = places.map(place => {
-    const image = place.photos?.[0]
-      ? `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${place.photos[0].photo_reference}&key=${process.env.GOOGLE_MAPS_API_KEY}`
-      : 'https://placehold.co/400x300?text=No+Image';
-    const category = place.types?.[0] || '餐廳';
-    return {
-      type: 'bubble',
-      hero: {
-        type: 'image',
-        url: image,
-        size: 'full',
-        aspectRatio: '20:13',
-        aspectMode: 'cover'
-      },
-      body: {
-        type: 'box',
-        layout: 'vertical',
-        contents: [
-          { type: 'text', text: place.name, weight: 'bold', size: 'lg', wrap: true },
-          { type: 'text', text: `📍 ${place.vicinity}`, size: 'sm', color: '#666666', wrap: true },
-          { type: 'text', text: `⭐ 評分：${place.rating}｜類型：${category}`, size: 'sm', margin: 'md', color: '#999999', wrap: true }
-        ]
-      },
-      footer: {
-        type: 'box',
-        layout: 'vertical',
-        spacing: 'sm',
-        contents: [
-          {
-            type: 'button',
-            style: 'primary',
-            height: 'sm',
-            action: {
-              type: 'postback',
-              label: '吃這家',
-              data: JSON.stringify({
-                action: 'navigate',
-                name: place.name,
-                latitude: place.geometry.location.lat,
-                longitude: place.geometry.location.lng
-              })
-            }
-          }
-        ]
-      }
-    };
-  });
+    const text = event.message.text.trim();
+    if (session.step === 'start') {
+      session.cuisine = Object.keys(CUISINE_KEYWORDS).includes(text) ? text : '不限';
+      session.step = 'rating';
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '想找幾星以上的餐廳呢？（請輸入 1～5，預設 3）'
+      });
+    }
 
-  bubbles.push({
-    type: 'bubble',
-    body: {
-      type: 'box',
-      layout: 'vertical',
-      contents: [
-        {
-          type: 'button',
-          style: 'secondary',
-          action: {
-            type: 'postback',
-            label: '🔁 重新推薦',
-            data: JSON.stringify({ action: 'recommend' })
-          }
+    if (session.step === 'rating') {
+      const stars = parseFloat(text);
+      session.rating = (stars >= 1 && stars <= 5) ? stars : 3;
+      session.step = 'radius';
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '想搜尋多遠範圍的餐廳？（請輸入數字，單位公尺，預設 2000）'
+      });
+    }
+
+    if (session.step === 'radius') {
+      const r = parseInt(text);
+      session.radius = (r >= 300 && r <= 5000) ? r : 2000;
+      session.step = 'done';
+
+      const { latitude, longitude } = session.location;
+      const cuisineFilter = CUISINE_KEYWORDS[session.cuisine] || [];
+
+      const res = await mapsClient.placesNearby({
+        params: {
+          location: { lat: latitude, lng: longitude },
+          radius: session.radius,
+          type: 'restaurant',
+          key: process.env.GOOGLE_MAPS_API_KEY
         }
-      ]
-    }
-  });
+      });
 
-  return {
-    type: 'flex',
-    altText: '目前營業中的附近美食推薦',
-    contents: {
-      type: 'carousel',
-      contents: bubbles
+      const filtered = res.data.results.filter(r =>
+        r.rating >= session.rating &&
+        r.opening_hours?.open_now &&
+        (cuisineFilter.length === 0 || cuisineFilter.some(k => (r.name + r.types.join()).toLowerCase().includes(k)))
+      ).sort(() => Math.random() - 0.5).slice(0, 3);
+
+      if (filtered.length === 0) {
+        return client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: '找不到符合條件的餐廳 😢 請再換個條件或位置試試看！'
+        });
+      }
+
+      const bubbles = filtered.map(place => {
+        const image = place.photos?.[0]
+          ? `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${place.photos[0].photo_reference}&key=${process.env.GOOGLE_MAPS_API_KEY}`
+          : 'https://placehold.co/400x300?text=No+Image';
+        return {
+          type: 'bubble',
+          hero: {
+            type: 'image',
+            url: image,
+            size: 'full',
+            aspectRatio: '20:13',
+            aspectMode: 'cover'
+          },
+          body: {
+            type: 'box',
+            layout: 'vertical',
+            contents: [
+              { type: 'text', text: place.name, weight: 'bold', size: 'lg', wrap: true },
+              { type: 'text', text: `📍 ${place.vicinity}`, size: 'sm', color: '#666666', wrap: true },
+              { type: 'text', text: `⭐ ${place.rating} 分`, size: 'sm', color: '#999999', wrap: true }
+            ]
+          },
+          footer: {
+            type: 'box',
+            layout: 'vertical',
+            contents: [
+              {
+                type: 'button',
+                style: 'primary',
+                action: {
+                  type: 'uri',
+                  label: '吃這家',
+                  uri: `https://www.google.com/maps/dir/?api=1&destination=${place.geometry.location.lat},${place.geometry.location.lng}`
+                }
+              }
+            ]
+          }
+        };
+      });
+
+      return client.replyMessage(event.replyToken, {
+        type: 'flex',
+        altText: '推薦餐廳',
+        contents: { type: 'carousel', contents: bubbles }
+      });
     }
-  };
+  }
+
+  return Promise.resolve(null);
 }
 
 module.exports = app;
