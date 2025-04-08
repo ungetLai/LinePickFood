@@ -1,0 +1,19 @@
+{
+  "name": "line-food-recommender",
+  "version": "1.0.0",
+  "description": "Line Bot that recommends nearby restaurants",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "@line/bot-sdk": "^7.5.2",
+    "express": "^4.18.2",
+    "dotenv": "^16.0.3",
+    "@googlemaps/google-maps-services-js": "^3.3.35"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  }
+} 
