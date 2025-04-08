@@ -16,7 +16,7 @@ const userLocations = new Map();
 const userPrevPlaces = new Map();
 const userPlaceCache = new Map();
 
-// 修正：rawBody + 手動 JSON parse
+// rawBody middleware
 app.use((req, res, next) => {
   getRawBody(req, {
     length: req.headers['content-length'],
@@ -43,17 +43,30 @@ app.post('/api/webhook', async (req, res) => {
       if (event.type === 'message') {
         if (event.message.type === 'location') {
           const { latitude, longitude } = event.message;
-          userLocations.set(userId, { latitude, longitude });
-          const places = await getNearbyPlaces(latitude, longitude);
-          const shuffled = places.sort(() => Math.random() - 0.5);
-          userPlaceCache.set(userId, shuffled);
-          const selected = shuffled.slice(0, 3);
-          userPrevPlaces.set(userId, selected.map(p => p.place_id));
-          return client.replyMessage(event.replyToken, createFlex(selected));
+          return handleSearch(lat = latitude, lng = longitude, userId, event.replyToken);
+        } else if (event.message.type === 'text') {
+          const keyword = event.message.text;
+          try {
+            const geo = await mapsClient.geocode({
+              params: {
+                address: keyword,
+                key: process.env.GOOGLE_MAPS_API_KEY
+              }
+            });
+            if (!geo.data.results.length) throw new Error('找不到地點');
+            const { lat, lng } = geo.data.results[0].geometry.location;
+            return handleSearch(lat, lng, userId, event.replyToken);
+          } catch (err) {
+            console.error('Geocode error:', err);
+            return client.replyMessage(event.replyToken, {
+              type: 'text',
+              text: '無法解析這個地點名稱，請再試一次或傳送位置資訊 📍'
+            });
+          }
         } else {
           return client.replyMessage(event.replyToken, {
             type: 'text',
-            text: '請傳送您的位置資訊，點選輸入框左側的「＋」並選擇「位置資訊」以獲取附近美食推薦 🍱'
+            text: '請傳送位置或輸入地點關鍵字，我將推薦附近的美食 🍱'
           });
         }
       } else if (event.type === 'postback') {
@@ -73,7 +86,7 @@ ${mapUrl}`
           if (remaining.length === 0) {
             return client.replyMessage(event.replyToken, {
               type: 'text',
-              text: '附近的餐廳已推薦完囉，可以傳送新位置再探索更多 🍽️'
+              text: '附近的餐廳已推薦完囉，可以傳送新位置或地點再探索更多 🍽️'
             });
           }
           const selected = remaining.slice(0, 3);
@@ -88,6 +101,17 @@ ${mapUrl}`
     res.status(500).send('Error');
   }
 });
+
+async function handleSearch(lat, lng, userId, replyToken) {
+  userLocations.set(userId, { lat, lng });
+  const places = await getNearbyPlaces(lat, lng);
+  const shuffled = places.sort(() => Math.random() - 0.5);
+  userPlaceCache.set(userId, shuffled);
+  const selected = shuffled.slice(0, 3);
+  userPrevPlaces.set(userId, selected.map(p => p.place_id));
+  const flex = createFlex(selected);
+  return client.replyMessage(replyToken, flex);
+}
 
 async function getNearbyPlaces(lat, lng) {
   const res = await mapsClient.placesNearby({
