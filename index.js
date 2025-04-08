@@ -30,33 +30,34 @@ app.post('/webhook', line.middleware(config), (req, res) => {
 
 // 處理事件
 async function handleEvent(event) {
-  if (event.type !== 'message') {
-    return Promise.resolve(null);
-  }
-
-  // 處理位置訊息
-  if (event.message.type === 'location') {
-    return handleLocationRequest(event);
-  }
-
   // 處理按鈕點擊事件
   if (event.type === 'postback') {
     return handlePostback(event);
   }
 
-  const userMessage = event.message.text.toLowerCase();
-  
-  if (userMessage.includes('推薦') || userMessage.includes('附近') || userMessage.includes('美食')) {
+  // 處理訊息事件
+  if (event.type === 'message') {
+    // 處理位置訊息
+    if (event.message.type === 'location') {
+      return handleLocationRequest(event);
+    }
+
+    const userMessage = event.message.text.toLowerCase();
+    
+    if (userMessage.includes('推薦') || userMessage.includes('附近') || userMessage.includes('美食')) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '請點擊下方選單的「位置」按鈕，或直接傳送您的位置給我，我會為您推薦附近的美食！'
+      });
+    }
+
     return client.replyMessage(event.replyToken, {
       type: 'text',
-      text: '請點擊下方選單的「位置」按鈕，或直接傳送您的位置給我，我會為您推薦附近的美食！'
+      text: '請傳送您的位置，或輸入「推薦」來獲取附近美食推薦！'
     });
   }
 
-  return client.replyMessage(event.replyToken, {
-    type: 'text',
-    text: '請傳送您的位置，或輸入「推薦」來獲取附近美食推薦！'
-  });
+  return Promise.resolve(null);
 }
 
 // 處理位置請求
@@ -91,39 +92,47 @@ async function handleLocationRequest(event) {
 
 // 處理按鈕點擊事件
 async function handlePostback(event) {
-  const data = JSON.parse(event.postback.data);
-  
-  if (data.action === 'navigate') {
-    // 傳送位置訊息
+  try {
+    const data = JSON.parse(event.postback.data);
+    
+    if (data.action === 'navigate') {
+      // 傳送位置訊息
+      return client.replyMessage(event.replyToken, {
+        type: 'location',
+        title: data.name,
+        address: data.address,
+        latitude: data.latitude,
+        longitude: data.longitude
+      });
+    } else if (data.action === 'recommend') {
+      // 重新推薦
+      const userLocation = userLocations.get(event.source.userId);
+      
+      if (!userLocation) {
+        return client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: '請先傳送您的位置給我，我會為您推薦附近的美食！'
+        });
+      }
+      
+      const restaurants = await searchNearbyRestaurants(userLocation.latitude, userLocation.longitude);
+      
+      if (restaurants.length === 0) {
+        return client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: '抱歉，在您附近沒有找到合適的餐廳。'
+        });
+      }
+      
+      const restaurantTemplate = createRestaurantTemplate(restaurants);
+      return client.replyMessage(event.replyToken, restaurantTemplate);
+    }
+  } catch (error) {
+    console.error('Error handling postback:', error);
     return client.replyMessage(event.replyToken, {
-      type: 'location',
-      title: data.name,
-      address: data.address,
-      latitude: data.latitude,
-      longitude: data.longitude
+      type: 'text',
+      text: '抱歉，發生了一些錯誤，請稍後再試。'
     });
-  } else if (data.action === 'recommend') {
-    // 重新推薦
-    const userLocation = userLocations.get(event.source.userId);
-    
-    if (!userLocation) {
-      return client.replyMessage(event.replyToken, {
-        type: 'text',
-        text: '請先傳送您的位置給我，我會為您推薦附近的美食！'
-      });
-    }
-    
-    const restaurants = await searchNearbyRestaurants(userLocation.latitude, userLocation.longitude);
-    
-    if (restaurants.length === 0) {
-      return client.replyMessage(event.replyToken, {
-        type: 'text',
-        text: '抱歉，在您附近沒有找到合適的餐廳。'
-      });
-    }
-    
-    const restaurantTemplate = createRestaurantTemplate(restaurants);
-    return client.replyMessage(event.replyToken, restaurantTemplate);
   }
 }
 
