@@ -16,7 +16,6 @@ const userLocations = new Map();
 const userPrevPlaces = new Map();
 const userPlaceCache = new Map();
 
-// rawBody middleware
 app.use((req, res, next) => {
   getRawBody(req, {
     length: req.headers['content-length'],
@@ -43,7 +42,7 @@ app.post('/api/webhook', async (req, res) => {
       if (event.type === 'message') {
         if (event.message.type === 'location') {
           const { latitude, longitude } = event.message;
-          return handleSearch(lat = latitude, lng = longitude, userId, event.replyToken);
+          return handleSearch(latitude, longitude, userId, event.replyToken);
         } else if (event.message.type === 'text') {
           const keyword = event.message.text;
           try {
@@ -66,7 +65,7 @@ app.post('/api/webhook', async (req, res) => {
         } else {
           return client.replyMessage(event.replyToken, {
             type: 'text',
-            text: '請傳送位置或輸入地點關鍵字，我將推薦附近的美食 🍱'
+            text: '請傳送位置或輸入地點關鍵字，我將推薦目前有營業的美食餐廳 🍽️'
           });
         }
       } else if (event.type === 'postback') {
@@ -105,6 +104,12 @@ ${mapUrl}`
 async function handleSearch(lat, lng, userId, replyToken) {
   userLocations.set(userId, { lat, lng });
   const places = await getNearbyPlaces(lat, lng);
+  if (places.length === 0) {
+    return client.replyMessage(replyToken, {
+      type: 'text',
+      text: '附近沒有目前營業中的餐廳，請換個地點試試 🍴'
+    });
+  }
   const shuffled = places.sort(() => Math.random() - 0.5);
   userPlaceCache.set(userId, shuffled);
   const selected = shuffled.slice(0, 3);
@@ -122,7 +127,9 @@ async function getNearbyPlaces(lat, lng) {
       key: process.env.GOOGLE_MAPS_API_KEY
     }
   });
-  return res.data.results.filter(p => p.rating >= 3);
+  return res.data.results.filter(
+    p => p.rating >= 3 && p.opening_hours?.open_now
+  );
 }
 
 function createFlex(places) {
@@ -195,7 +202,7 @@ function createFlex(places) {
 
   return {
     type: 'flex',
-    altText: '附近美食推薦',
+    altText: '目前營業中的附近美食推薦',
     contents: {
       type: 'carousel',
       contents: bubbles
