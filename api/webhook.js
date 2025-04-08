@@ -63,6 +63,30 @@ async function handleEvent(event) {
     const session = userSessions.get(userId);
 
     if (!session) {
+      if (event.message.text.toLowerCase().includes("開始找餐廳")) {
+        return client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: '請傳送您目前的位置 📍 我們將為您推薦附近美食！'
+        });
+      }
+
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '👋 歡迎使用 EatIt 美食推薦機器人！想找餐廳嗎？點下面的按鈕來開始推薦 🍜',
+        quickReply: {
+          items: [
+            {
+              type: 'action',
+              action: {
+                type: 'message',
+                label: '我要找餐廳 🍽️',
+                text: '開始找餐廳'
+              }
+            }
+          ]
+        }
+      });
+    
       return client.replyMessage(event.replyToken, {
         type: 'text',
         text: '👋 歡迎使用 EatIt 美食推薦機器人！請先傳送您的位置 📍'
